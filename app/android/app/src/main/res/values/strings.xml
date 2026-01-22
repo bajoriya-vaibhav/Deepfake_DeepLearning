@@ -1,0 +1,13 @@
+<resources>
+    <string name="app_name">Deepfake Detection</string>
+    <string name="service_notification_title">Deepfake Detection Active</string>
+    <string name="service_notification_channel">Deepfake Analysis Channel</string>
+    <string name="status_idle">Idle</string>
+    <string name="status_analyzing">Analyzing...</string>
+    <string name="status_real">Likely Real</string>
+    <string name="status_fake">Possible Deepfake</string>
+    <string name="start_service">Start Detection Service</string>
+    <string name="stop_service">Stop Service</string>
+    <string name="grant_overlay">Grant Overlay Permission</string>
+    <string name="server_url">Server URL</string>
+</resources>
