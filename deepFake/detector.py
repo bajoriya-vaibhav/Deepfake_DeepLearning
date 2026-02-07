@@ -18,6 +18,7 @@ from fusion.fusion_strategy import (
     AdaptiveFusionStrategy,
     FusionStrategy
 )
+from rl_system import RLAdaptiveFusion
 
 # Try to import Gemini detector
 try:
@@ -90,6 +91,16 @@ class DeepFakeDetector:
                 self.fusion_strategy = MaxFusionStrategy()
             elif Config.FUSION_MODE == 'adaptive':
                 self.fusion_strategy = AdaptiveFusionStrategy()
+            elif Config.FUSION_MODE == 'rl_adaptive':
+                # Simple Reinforcement Learning based adaptive fusion
+                self.fusion_strategy = RLAdaptiveFusion(
+                    initial_video_weight=Config.VIDEO_WEIGHT,
+                    learning_rate=Config.RL_LEARNING_RATE
+                )
+                # Load previously learned weights if enabled
+                if Config.RL_LOAD_PREVIOUS:
+                    self.fusion_strategy.load_model()
+                logger.info("RL Adaptive Fusion initialized")
             else:
                 raise ValueError(f"Unknown fusion mode: {Config.FUSION_MODE}")
         else:

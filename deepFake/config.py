@@ -20,12 +20,21 @@ class Config:
     MIN_FRAMES_REQUIRED = 3     # Minimum frames needed for valid analysis
     
     # Fusion strategy selection
-    # Options: 'security_first', 'weighted', 'max', 'adaptive'
-    FUSION_MODE = 'security_first'  # Use security-first by default
+    # Options: 'security_first', 'weighted', 'max', 'adaptive', 'rl_adaptive', 'advanced_rl'
+    FUSION_MODE = 'rl_adaptive'  # Use simple RL with feedback learning
     
-    # Fusion weights (for weighted mode)
-    VIDEO_WEIGHT = 0.7
-    AUDIO_WEIGHT = 0.3
+    # Fusion weights (for weighted mode & RL initial weights)
+    VIDEO_WEIGHT = 0.9  # Start with 90% video weight (stronger!)
+    AUDIO_WEIGHT = 0.1  # Start with 10% audio weight
+    
+    # RL Configuration (simple gradient-based RL - no external libraries)
+    RL_LEARNING_RATE = 0.05  # How fast to adapt weights (5% per feedback)
+    RL_LOAD_PREVIOUS = True  # Load previously learned weights on startup
+    
+    # Advanced RL Configuration (neural network-based - not used currently)
+    ADVANCED_RL_ALGORITHM = 'PPO'  # 'PPO' or 'DQN'
+    ADVANCED_RL_LEARNING_RATE = 0.0003  # Neural network learning rate
+    ADVANCED_RL_TRAIN_STEPS = 1000  # Training steps per feedback batch
     
     # Security settings
     MISMATCH_THRESHOLD = 0.3  # Threshold for detecting modality disagreement
@@ -46,5 +55,5 @@ class Config:
         assert abs(cls.VIDEO_WEIGHT + cls.AUDIO_WEIGHT - 1.0) < 0.001, \
             "Weights must sum to 1.0"
         assert 0 < cls.FAKE_THRESHOLD < 1, "Threshold must be between 0 and 1"
-        assert cls.FUSION_MODE in ['security_first', 'weighted', 'max', 'adaptive'], \
+        assert cls.FUSION_MODE in ['security_first', 'weighted', 'max', 'adaptive', 'rl_adaptive', 'advanced_rl'], \
             "Invalid fusion mode"
