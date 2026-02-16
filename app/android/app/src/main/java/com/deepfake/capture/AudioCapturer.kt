@@ -37,43 +37,80 @@ class AudioCapturer(
 
     fun start(scope: CoroutineScope) {
         val minBufferSize = AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT)
-        val bufferSize = maxOf(minBufferSize, SAMPLE_RATE * 2) // At least 1 second buffer
+        if (minBufferSize == AudioRecord.ERROR || minBufferSize == AudioRecord.ERROR_BAD_VALUE) {
+            Log.e(TAG, "Invalid buffer size: $minBufferSize")
+            return
+        }
+        val bufferSize = maxOf(minBufferSize, SAMPLE_RATE * 2)
 
+        // Try playback capture first, then microphone fallback
         audioRecord = try {
-            createPlaybackCaptureRecord(bufferSize)
+            if (mediaProjection != null) {
+                createPlaybackCaptureRecord(bufferSize)
+            } else {
+                throw IllegalStateException("No MediaProjection available")
+            }
         } catch (e: Exception) {
-            Log.w(TAG, "AudioPlaybackCapture unavailable, falling back to microphone", e)
-            createMicrophoneRecord(bufferSize)
+            Log.w(TAG, "AudioPlaybackCapture failed: ${e.message}, trying microphone fallback")
+            try {
+                createMicrophoneRecord(bufferSize)
+            } catch (e2: Exception) {
+                Log.e(TAG, "Microphone fallback also failed: ${e2.message}")
+                null
+            }
         }
 
-        if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
-            Log.e(TAG, "AudioRecord failed to initialize")
+        if (audioRecord == null) {
+            Log.e(TAG, "Could not create any AudioRecord")
             return
         }
 
-        audioRecord!!.startRecording()
-        Log.i(TAG, "Audio capture started (playbackCapture=$isUsingPlaybackCapture)")
+        if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
+            Log.e(TAG, "AudioRecord state=${audioRecord?.state}, not initialized. Releasing.")
+            audioRecord?.release()
+            audioRecord = null
+            return
+        }
+
+        try {
+            audioRecord!!.startRecording()
+            Log.i(TAG, "Audio capture started (playbackCapture=$isUsingPlaybackCapture)")
+        } catch (e: Exception) {
+            Log.e(TAG, "startRecording() failed", e)
+            audioRecord?.release()
+            audioRecord = null
+            return
+        }
 
         captureJob = scope.launch(Dispatchers.IO) {
             val samplesPerSegment = (SAMPLE_RATE * SEGMENT_DURATION_MS / 1000).toInt()
             val segmentBuffer = ShortArray(samplesPerSegment)
 
             while (isActive) {
-                var totalRead = 0
-                while (totalRead < samplesPerSegment && isActive) {
-                    val read = audioRecord!!.read(
-                        segmentBuffer, totalRead, samplesPerSegment - totalRead
-                    )
-                    if (read > 0) {
-                        totalRead += read
-                    } else {
-                        delay(10)
-                    }
-                }
+                try {
+                    var totalRead = 0
+                    while (totalRead < samplesPerSegment && isActive) {
+                        val read = audioRecord?.read(
+                            segmentBuffer, totalRead, samplesPerSegment - totalRead
+                        ) ?: break
 
-                if (totalRead > 0) {
-                    latestSegment = pcmToWav(segmentBuffer, totalRead)
-                    Log.d(TAG, "Audio segment ready: ${latestSegment!!.size} bytes")
+                        if (read > 0) {
+                            totalRead += read
+                        } else if (read < 0) {
+                            Log.e(TAG, "AudioRecord.read error: $read")
+                            break
+                        } else {
+                            delay(10)
+                        }
+                    }
+
+                    if (totalRead > 0) {
+                        latestSegment = pcmToWav(segmentBuffer, totalRead)
+                        Log.d(TAG, "Audio segment ready: ${latestSegment!!.size} bytes ($totalRead samples)")
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error recording audio segment", e)
+                    delay(1000) // Wait before retrying
                 }
             }
         }
@@ -104,6 +141,7 @@ class AudioCapturer(
     @Suppress("MissingPermission")
     private fun createMicrophoneRecord(bufferSize: Int): AudioRecord {
         isUsingPlaybackCapture = false
+        Log.i(TAG, "Creating microphone AudioRecord (fallback)")
         return AudioRecord(
             MediaRecorder.AudioSource.MIC,
             SAMPLE_RATE,
@@ -113,9 +151,6 @@ class AudioCapturer(
         )
     }
 
-    /**
-     * Returns the most recently recorded audio segment as WAV bytes, or null.
-     */
     fun consumeLatestSegment(): ByteArray? {
         val seg = latestSegment
         latestSegment = null
@@ -136,38 +171,29 @@ class AudioCapturer(
         Log.i(TAG, "Audio capture stopped")
     }
 
-    /**
-     * Converts raw PCM samples to a WAV byte array with proper header.
-     */
     private fun pcmToWav(samples: ShortArray, count: Int): ByteArray {
-        val pcmBytes = count * 2 // 16-bit = 2 bytes per sample
-        val totalSize = 44 + pcmBytes // WAV header = 44 bytes
+        val pcmBytes = count * 2
+        val totalSize = 44 + pcmBytes
 
         val output = ByteArrayOutputStream(totalSize)
         val header = ByteBuffer.allocate(44).order(ByteOrder.LITTLE_ENDIAN)
 
-        // RIFF header
         header.put("RIFF".toByteArray())
         header.putInt(totalSize - 8)
         header.put("WAVE".toByteArray())
-
-        // fmt subchunk
         header.put("fmt ".toByteArray())
-        header.putInt(16) // subchunk size
-        header.putShort(1) // PCM format
-        header.putShort(1) // mono
+        header.putInt(16)
+        header.putShort(1)
+        header.putShort(1)
         header.putInt(SAMPLE_RATE)
-        header.putInt(SAMPLE_RATE * 2) // byte rate
-        header.putShort(2) // block align
-        header.putShort(16) // bits per sample
-
-        // data subchunk
+        header.putInt(SAMPLE_RATE * 2)
+        header.putShort(2)
+        header.putShort(16)
         header.put("data".toByteArray())
         header.putInt(pcmBytes)
 
         output.write(header.array())
 
-        // Write PCM data
         val dataBuffer = ByteBuffer.allocate(pcmBytes).order(ByteOrder.LITTLE_ENDIAN)
         for (i in 0 until count) {
             dataBuffer.putShort(samples[i])

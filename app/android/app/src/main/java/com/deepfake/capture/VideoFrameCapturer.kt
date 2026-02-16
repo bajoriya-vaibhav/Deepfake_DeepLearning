@@ -13,7 +13,7 @@ import java.io.ByteArrayOutputStream
 
 /**
  * Captures screen frames from a VirtualDisplay backed by MediaProjection.
- * Samples at ~1 fps, resizes to 224x224, and outputs JPEG byte arrays.
+ * Samples frames and resizes to 224x224 JPEG.
  */
 class VideoFrameCapturer(
     private val mediaProjection: MediaProjection,
@@ -23,8 +23,8 @@ class VideoFrameCapturer(
 ) {
     companion object {
         private const val TAG = "VideoFrameCapturer"
-        private const val OUTPUT_SIZE = 224
-        private const val JPEG_QUALITY = 85
+        private const val OUTPUT_SIZE = 720
+        private const val JPEG_QUALITY = 95
     }
 
     private var virtualDisplay: VirtualDisplay? = null
@@ -36,18 +36,28 @@ class VideoFrameCapturer(
     private var latestFrame: ByteArray? = null
 
     fun start() {
+        Log.i(TAG, "Starting with ${screenWidth}x${screenHeight} density=$screenDensity")
+
         handlerThread = HandlerThread("FrameCaptureThread").also { it.start() }
         handler = Handler(handlerThread!!.looper)
 
         imageReader = ImageReader.newInstance(
             screenWidth, screenHeight, PixelFormat.RGBA_8888, 2
         )
+        Log.i(TAG, "ImageReader created")
 
         imageReader!!.setOnImageAvailableListener({ reader ->
             var image: Image? = null
             try {
-                image = reader.acquireLatestImage() ?: return@setOnImageAvailableListener
+                image = reader.acquireLatestImage()
+                if (image == null) return@setOnImageAvailableListener
+
                 val bitmap = imageToBitmap(image)
+                if (bitmap == null) {
+                    Log.w(TAG, "imageToBitmap returned null")
+                    return@setOnImageAvailableListener
+                }
+
                 val resized = Bitmap.createScaledBitmap(bitmap, OUTPUT_SIZE, OUTPUT_SIZE, true)
                 if (resized != bitmap) bitmap.recycle()
 
@@ -60,25 +70,25 @@ class VideoFrameCapturer(
             } catch (e: Exception) {
                 Log.e(TAG, "Error capturing frame", e)
             } finally {
-                image?.close()
+                try {
+                    image?.close()
+                } catch (e: Exception) {
+                    // ignore
+                }
             }
         }, handler)
 
         virtualDisplay = mediaProjection.createVirtualDisplay(
             "DeepfakeCapture",
             screenWidth, screenHeight, screenDensity,
-            0, // flags
+            0,
             imageReader!!.surface,
             null, null
         )
 
-        Log.i(TAG, "Video frame capture started (${screenWidth}x${screenHeight})")
+        Log.i(TAG, "VirtualDisplay created, capture running")
     }
 
-    /**
-     * Returns the most recently captured frame as a JPEG byte array, or null.
-     * Consumes the frame (returns null on next call until a new frame is ready).
-     */
     fun consumeLatestFrame(): ByteArray? {
         val frame = latestFrame
         latestFrame = null
@@ -86,9 +96,9 @@ class VideoFrameCapturer(
     }
 
     fun stop() {
-        virtualDisplay?.release()
+        try { virtualDisplay?.release() } catch (e: Exception) { Log.w(TAG, "Error releasing VirtualDisplay", e) }
         virtualDisplay = null
-        imageReader?.close()
+        try { imageReader?.close() } catch (e: Exception) { Log.w(TAG, "Error closing ImageReader", e) }
         imageReader = null
         handlerThread?.quitSafely()
         handlerThread = null
@@ -97,27 +107,30 @@ class VideoFrameCapturer(
         Log.i(TAG, "Video frame capture stopped")
     }
 
-    private fun imageToBitmap(image: Image): Bitmap {
-        val plane = image.planes[0]
-        val buffer = plane.buffer
-        val pixelStride = plane.pixelStride
-        val rowStride = plane.rowStride
-        val rowPadding = rowStride - pixelStride * screenWidth
+    private fun imageToBitmap(image: Image): Bitmap? {
+        return try {
+            val plane = image.planes[0]
+            val buffer = plane.buffer
+            val pixelStride = plane.pixelStride
+            val rowStride = plane.rowStride
+            val rowPadding = rowStride - pixelStride * screenWidth
 
-        val bitmap = Bitmap.createBitmap(
-            screenWidth + rowPadding / pixelStride,
-            screenHeight,
-            Bitmap.Config.ARGB_8888
-        )
-        bitmap.copyPixelsFromBuffer(buffer)
+            val bitmapWidth = screenWidth + rowPadding / pixelStride
+            val bitmap = Bitmap.createBitmap(
+                bitmapWidth, screenHeight, Bitmap.Config.ARGB_8888
+            )
+            bitmap.copyPixelsFromBuffer(buffer)
 
-        // Crop out padding if any
-        return if (rowPadding > 0) {
-            val cropped = Bitmap.createBitmap(bitmap, 0, 0, screenWidth, screenHeight)
-            bitmap.recycle()
-            cropped
-        } else {
-            bitmap
+            if (rowPadding > 0) {
+                val cropped = Bitmap.createBitmap(bitmap, 0, 0, screenWidth, screenHeight)
+                bitmap.recycle()
+                cropped
+            } else {
+                bitmap
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "imageToBitmap error", e)
+            null
         }
     }
 }

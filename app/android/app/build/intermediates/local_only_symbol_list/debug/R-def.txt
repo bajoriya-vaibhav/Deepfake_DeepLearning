@@ -37,3 +37,4 @@ string status_analyzing
 string status_capturing
 string status_idle
 style Theme.DeepfakeCapture
+xml network_security_config

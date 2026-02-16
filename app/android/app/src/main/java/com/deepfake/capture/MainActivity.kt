@@ -69,6 +69,12 @@ class MainActivity : AppCompatActivity() {
                     updateStatusUI("Idle", R.color.status_idle)
                     setCapturingState(false)
                 }
+                CaptureService.STATUS_ERROR -> {
+                    val errorMsg = intent.getStringExtra("error_msg") ?: "Unknown error"
+                    updateStatusUI("Error: $errorMsg", R.color.result_fake)
+                    setCapturingState(false)
+                    Toast.makeText(context, "Capture error: $errorMsg", Toast.LENGTH_LONG).show()
+                }
                 "Result" -> {
                     val prediction = intent.getStringExtra(CaptureService.EXTRA_PREDICTION) ?: "Unknown"
                     val confidence = intent.getFloatExtra(CaptureService.EXTRA_CONFIDENCE, 0f)
