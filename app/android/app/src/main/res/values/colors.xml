@@ -13,4 +13,8 @@
     <color name="card_bg">#FF16213E</color>
     <color name="accent">#FF0F3460</color>
     <color name="accent_bright">#FFE94560</color>
+    <color name="overlay_bg">#E6202030</color>
+    <color name="overlay_border">#40FFFFFF</color>
+    <color name="btn_start_bg">#FF2E7D32</color>
+    <color name="btn_stop_bg">#FFC62828</color>
 </resources>

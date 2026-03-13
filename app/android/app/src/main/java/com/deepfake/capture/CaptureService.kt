@@ -17,24 +17,30 @@ import kotlinx.coroutines.*
 
 /**
  * Foreground service that manages the entire capture lifecycle.
+ * The overlay (managed by OverlayManager) provides Start/Stop/Close controls.
+ * On service start: shows overlay in Idle state.
+ * On overlay Start: begins capture loop.
+ * On overlay Stop: stops capture loop, resets to Idle.
+ * On overlay Close: stops service entirely.
  */
-class CaptureService : Service() {
+class CaptureService : Service(), OverlayManager.OverlayCallback {
 
     companion object {
         private const val TAG = "CaptureService"
         private const val CHANNEL_ID = "deepfake_capture_channel"
         private const val NOTIFICATION_ID = 1001
+
         private const val FRAME_INTERVAL_MS = 1000L
 
         const val EXTRA_RESULT_CODE = "result_code"
         const val EXTRA_RESULT_DATA = "result_data"
         const val EXTRA_SERVER_URL = "server_url"
 
-        const val ACTION_STATUS_UPDATE = "com.deepfake.capture.STATUS_UPDATE"
+        // Status constants (kept for internal use)
         const val EXTRA_STATUS = "status"
         const val EXTRA_PREDICTION = "prediction"
         const val EXTRA_CONFIDENCE = "confidence"
-
+        const val ACTION_STATUS_UPDATE = "com.deepfake.capture.STATUS_UPDATE"
         const val STATUS_CAPTURING = "Capturing"
         const val STATUS_ANALYZING = "Analyzing"
         const val STATUS_IDLE = "Idle"
@@ -49,6 +55,11 @@ class CaptureService : Service() {
     private var captureJob: Job? = null
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
+    // Store projection data for lazy initialization
+    private var resultCode: Int = Int.MIN_VALUE
+    private var resultData: Intent? = null
+    private var serverUrl: String = ""
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -61,7 +72,6 @@ class CaptureService : Service() {
         Log.i(TAG, "=== onStartCommand called ===")
 
         // CRITICAL: Must call startForeground FIRST on Android 12+
-        // before doing ANYTHING else (including validation/stopSelf)
         try {
             startForeground(NOTIFICATION_ID, createNotification())
             Log.i(TAG, "startForeground succeeded")
@@ -73,55 +83,93 @@ class CaptureService : Service() {
 
         if (intent == null) {
             Log.e(TAG, "Intent is null, stopping service")
-            broadcastStatus(STATUS_ERROR, "No intent received")
             stopSelf()
             return START_NOT_STICKY
         }
 
-        // NOTE: Activity.RESULT_OK == -1, so we use MIN_VALUE as the "missing" sentinel
-        val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, Int.MIN_VALUE)
-        val serverUrl = intent.getStringExtra(EXTRA_SERVER_URL) ?: ""
-
-        Log.i(TAG, "resultCode=$resultCode, serverUrl='$serverUrl'")
+        // Store projection data for later use when Start is pressed
+        resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, Int.MIN_VALUE)
+        serverUrl = intent.getStringExtra(EXTRA_SERVER_URL) ?: ""
 
         // API 33+ requires the typed getParcelableExtra overload
-        val resultData: Intent? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        resultData = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             intent.getParcelableExtra(EXTRA_RESULT_DATA, Intent::class.java)
         } else {
             @Suppress("DEPRECATION")
             intent.getParcelableExtra(EXTRA_RESULT_DATA)
         }
 
-        Log.i(TAG, "resultData=${if (resultData != null) "present" else "NULL"}")
+        Log.i(TAG, "resultCode=$resultCode, serverUrl='$serverUrl', resultData=${if (resultData != null) "present" else "NULL"}")
 
-        if (resultCode == Int.MIN_VALUE || resultData == null || serverUrl.isBlank()) {
-            Log.e(TAG, "Missing extras! resultCode=$resultCode, data=$resultData, url='$serverUrl'")
-            broadcastStatus(STATUS_ERROR, "Missing capture data")
+        if (resultCode == Int.MIN_VALUE || resultData == null) {
+            Log.e(TAG, "Missing capture data, stopping")
             stopSelf()
             return START_NOT_STICKY
         }
 
-        // Initialize everything in a try-catch
-        try {
-            initializeCapture(resultCode, resultData, serverUrl)
-        } catch (e: Exception) {
-            Log.e(TAG, "FATAL: Failed to initialize capture", e)
-            broadcastStatus(STATUS_ERROR, e.message ?: "Init failed")
-            stopSelf()
-        }
+        // Show overlay immediately in Idle state
+        showOverlay()
 
         return START_NOT_STICKY
     }
 
-    private fun initializeCapture(resultCode: Int, resultData: Intent, serverUrl: String) {
+    // ─── Overlay Setup ─────────────────────────────────────────────
+
+    private fun showOverlay() {
+        try {
+            if (Settings.canDrawOverlays(this)) {
+                overlayManager = OverlayManager(this)
+                overlayManager?.setCallback(this)
+                overlayManager?.show()
+                Log.i(TAG, "Overlay shown in Idle state")
+            } else {
+                Log.w(TAG, "No overlay permission — service running without overlay")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to show overlay", e)
+        }
+    }
+
+    // ─── OverlayCallback Implementation ────────────────────────────
+
+    override fun onStartCapture(serverUrl: String) {
+        Log.i(TAG, "Overlay: Start pressed, url=$serverUrl")
+        this.serverUrl = serverUrl
+
+        // Initialize capture components
+        try {
+            initializeCapture()
+            overlayManager?.setCapturingState(true)
+            overlayManager?.updateStatus("📡 Capturing…")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to start capture", e)
+            overlayManager?.updateStatus("Error: ${e.message}")
+            overlayManager?.setCapturingState(false)
+        }
+    }
+
+    override fun onStopCapture() {
+        Log.i(TAG, "Overlay: Stop pressed")
+        stopCapturing()
+        overlayManager?.setCapturingState(false)
+        overlayManager?.updateStatus("Idle")
+    }
+
+    override fun onCloseOverlay() {
+        Log.i(TAG, "Overlay: Close pressed")
+        stopSelf()
+    }
+
+    // ─── Capture Lifecycle ─────────────────────────────────────────
+
+    private fun initializeCapture() {
+        val data = resultData ?: throw RuntimeException("No projection data available")
+
         // 1. Create MediaProjection
         Log.i(TAG, "Creating MediaProjection...")
         mediaProjectionHelper = MediaProjectionHelper(this)
-        val projection = mediaProjectionHelper!!.createProjection(resultCode, resultData)
-
-        if (projection == null) {
-            throw RuntimeException("MediaProjection creation returned null")
-        }
+        val projection = mediaProjectionHelper!!.createProjection(resultCode, data)
+            ?: throw RuntimeException("MediaProjection creation returned null")
         Log.i(TAG, "MediaProjection created OK")
 
         // 2. Get screen metrics
@@ -143,7 +191,6 @@ class CaptureService : Service() {
             Log.i(TAG, "VideoFrameCapturer started OK")
         } catch (e: Exception) {
             Log.e(TAG, "VideoFrameCapturer.start() failed", e)
-            // Continue without video — audio might still work
             videoFrameCapturer = null
         }
 
@@ -155,37 +202,20 @@ class CaptureService : Service() {
             Log.i(TAG, "AudioCapturer started OK")
         } catch (e: Exception) {
             Log.e(TAG, "AudioCapturer.start() failed", e)
-            // Continue without audio — video might still work
             audioCapturer = null
         }
 
         // 5. API client
         apiClient = ApiClient(serverUrl)
 
-        // 6. Overlay (optional)
-        try {
-            if (Settings.canDrawOverlays(this)) {
-                overlayManager = OverlayManager(this)
-                overlayManager?.show()
-                overlayManager?.updateStatus("📡 Capturing…")
-                Log.i(TAG, "Overlay shown")
-            } else {
-                Log.i(TAG, "No overlay permission, skipping overlay")
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Overlay failed (non-critical)", e)
-        }
-
-        // 7. Start capture loop
-        broadcastStatus(STATUS_CAPTURING)
+        // 6. Start capture loop
         startCaptureLoop()
         Log.i(TAG, "=== Capture fully initialized ===")
     }
 
     private fun startCaptureLoop() {
         captureJob = serviceScope.launch {
-            // Wait a moment for capturers to stabilize
-            delay(500)
+            delay(500) // Wait for capturers to stabilize
 
             while (isActive) {
                 delay(FRAME_INTERVAL_MS)
@@ -197,58 +227,48 @@ class CaptureService : Service() {
                     Log.d(TAG, "Loop: frame=${frame?.size ?: "null"} bytes, audio=${audio?.size ?: "null"} bytes")
 
                     if (frame != null || audio != null) {
-                        broadcastStatus(STATUS_ANALYZING)
                         overlayManager?.updateStatus("🔍 Analyzing…")
 
                         val result = apiClient?.sendForPrediction(frame, audio)
 
                         if (result != null) {
                             Log.i(TAG, "Result: ${result.prediction} (${result.confidence})")
-                            broadcastResult(result.prediction, result.confidence)
                             overlayManager?.updateResult(result.prediction, result.confidence)
                         } else {
-                            broadcastStatus(STATUS_CAPTURING)
                             overlayManager?.updateStatus("📡 Capturing…")
                         }
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Error in capture loop iteration", e)
-                    // Don't crash — continue looping
                 }
             }
         }
     }
 
-    private fun broadcastStatus(status: String, errorMsg: String? = null) {
-        val intent = Intent(ACTION_STATUS_UPDATE).apply {
-            putExtra(EXTRA_STATUS, status)
-            if (errorMsg != null) putExtra("error_msg", errorMsg)
-            setPackage(packageName)
-        }
-        sendBroadcast(intent)
-    }
-
-    private fun broadcastResult(prediction: String, confidence: Float) {
-        val intent = Intent(ACTION_STATUS_UPDATE).apply {
-            putExtra(EXTRA_STATUS, "Result")
-            putExtra(EXTRA_PREDICTION, prediction)
-            putExtra(EXTRA_CONFIDENCE, confidence)
-            setPackage(packageName)
-        }
-        sendBroadcast(intent)
-    }
-
-    override fun onDestroy() {
-        Log.i(TAG, "=== CaptureService onDestroy ===")
+    private fun stopCapturing() {
         captureJob?.cancel()
+        captureJob = null
         try { videoFrameCapturer?.stop() } catch (e: Exception) { Log.e(TAG, "Error stopping video", e) }
         try { audioCapturer?.stop() } catch (e: Exception) { Log.e(TAG, "Error stopping audio", e) }
         try { mediaProjectionHelper?.stop() } catch (e: Exception) { Log.e(TAG, "Error stopping projection", e) }
+        videoFrameCapturer = null
+        audioCapturer = null
+        mediaProjectionHelper = null
+        apiClient = null
+    }
+
+    // ─── Service Lifecycle ─────────────────────────────────────────
+
+    override fun onDestroy() {
+        Log.i(TAG, "=== CaptureService onDestroy ===")
+        stopCapturing()
         try { overlayManager?.hide() } catch (e: Exception) { Log.e(TAG, "Error hiding overlay", e) }
+        overlayManager = null
         serviceScope.cancel()
-        broadcastStatus(STATUS_IDLE)
         super.onDestroy()
     }
+
+    // ─── Notification ──────────────────────────────────────────────
 
     private fun createNotificationChannel() {
         val channel = NotificationChannel(

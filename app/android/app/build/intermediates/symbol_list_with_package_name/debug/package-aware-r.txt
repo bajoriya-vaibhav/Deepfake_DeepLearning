@@ -1276,6 +1276,8 @@ color bright_foreground_inverse_material_dark
 color bright_foreground_inverse_material_light
 color bright_foreground_material_dark
 color bright_foreground_material_light
+color btn_start_bg
+color btn_stop_bg
 color button_material_dark
 color button_material_light
 color call_notification_answer_color
@@ -1987,6 +1989,8 @@ color mtrl_textinput_focused_box_stroke_color
 color mtrl_textinput_hovered_box_stroke_color
 color notification_action_color_filter
 color notification_icon_bg_color
+color overlay_bg
+color overlay_border
 color primary_dark_material_dark
 color primary_dark_material_light
 color primary_material_dark
@@ -3089,9 +3093,6 @@ id beginning
 id blocking
 id bottom
 id bounce
-id btnStart
-id btnStop
-id button
 id buttonPanel
 id cancel_button
 id center
@@ -3160,7 +3161,6 @@ id end
 id endToStart
 id enterAlways
 id enterAlwaysCollapsed
-id etServerUrl
 id exitUntilCollapsed
 id expand_activities_button
 id expanded_menu
@@ -3329,7 +3329,6 @@ id radio
 id ratio
 id rectangles
 id report_drawn
-id resultCard
 id reverseSawtooth
 id right
 id rightToLeft
@@ -3388,7 +3387,6 @@ id startToEnd
 id startVertical
 id staticLayout
 id staticPostLayout
-id statusIndicator
 id stop
 id stretch
 id submenuarrow
@@ -3439,9 +3437,7 @@ id transition_position
 id transition_scene_layoutid_cache
 id transition_transform
 id triangle
-id tvConfidence
-id tvResult
-id tvStatus
+id tvPermissionStatus
 id unchecked
 id uniform
 id unlabeled
@@ -3817,11 +3813,13 @@ string notification_channel_desc
 string notification_channel_name
 string notification_text
 string notification_title
+string overlay_title
 string password_toggle_content_description
 string path_password_eye
 string path_password_eye_mask_strike_through
 string path_password_eye_mask_visible
 string path_password_strike_through
+string permission_subtitle
 string search_menu_title
 string searchbar_scrolling_view_behavior
 string searchview_clear_text_content_description

@@ -1275,6 +1275,8 @@ int color bright_foreground_inverse_material_dark 0x7f050026
 int color bright_foreground_inverse_material_light 0x7f050027
 int color bright_foreground_material_dark 0x7f050028
 int color bright_foreground_material_light 0x7f050029
+int color btn_start_bg 0x7f05030f
+int color btn_stop_bg 0x7f050310
 int color button_material_dark 0x7f05002a
 int color button_material_light 0x7f05002b
 int color call_notification_answer_color 0x7f05002c
@@ -1986,6 +1988,8 @@ int color mtrl_textinput_focused_box_stroke_color 0x7f0502ed
 int color mtrl_textinput_hovered_box_stroke_color 0x7f0502ee
 int color notification_action_color_filter 0x7f0502ef
 int color notification_icon_bg_color 0x7f0502f0
+int color overlay_bg 0x7f050311
+int color overlay_border 0x7f050312
 int color primary_dark_material_dark 0x7f0502f1
 int color primary_dark_material_light 0x7f0502f2
 int color primary_material_dark 0x7f0502f3
@@ -3088,9 +3092,6 @@ int id beginning 0x7f080054
 int id blocking 0x7f080055
 int id bottom 0x7f080056
 int id bounce 0x7f080057
-int id btnStart 0x7f080058
-int id btnStop 0x7f080059
-int id button 0x7f08005a
 int id buttonPanel 0x7f08005b
 int id cancel_button 0x7f08005c
 int id center 0x7f08005d
@@ -3159,7 +3160,6 @@ int id end 0x7f08009b
 int id endToStart 0x7f08009c
 int id enterAlways 0x7f08009d
 int id enterAlwaysCollapsed 0x7f08009e
-int id etServerUrl 0x7f08009f
 int id exitUntilCollapsed 0x7f0800a0
 int id expand_activities_button 0x7f0800a1
 int id expanded_menu 0x7f0800a2
@@ -3328,7 +3328,6 @@ int id radio 0x7f080144
 int id ratio 0x7f080145
 int id rectangles 0x7f080146
 int id report_drawn 0x7f080147
-int id resultCard 0x7f080148
 int id reverseSawtooth 0x7f080149
 int id right 0x7f08014a
 int id rightToLeft 0x7f08014b
@@ -3387,7 +3386,6 @@ int id startToEnd 0x7f08017f
 int id startVertical 0x7f080180
 int id staticLayout 0x7f080181
 int id staticPostLayout 0x7f080182
-int id statusIndicator 0x7f080183
 int id stop 0x7f080184
 int id stretch 0x7f080185
 int id submenuarrow 0x7f080186
@@ -3438,9 +3436,7 @@ int id transition_position 0x7f0801b2
 int id transition_scene_layoutid_cache 0x7f0801b3
 int id transition_transform 0x7f0801b4
 int id triangle 0x7f0801b5
-int id tvConfidence 0x7f0801b6
-int id tvResult 0x7f0801b7
-int id tvStatus 0x7f0801b8
+int id tvPermissionStatus 0x7f0801ca
 int id unchecked 0x7f0801b9
 int id uniform 0x7f0801ba
 int id unlabeled 0x7f0801bb
@@ -3816,11 +3812,13 @@ int string notification_channel_desc 0x7f0f009e
 int string notification_channel_name 0x7f0f009f
 int string notification_text 0x7f0f00a0
 int string notification_title 0x7f0f00a1
+int string overlay_title 0x7f0f00b1
 int string password_toggle_content_description 0x7f0f00a2
 int string path_password_eye 0x7f0f00a3
 int string path_password_eye_mask_strike_through 0x7f0f00a4
 int string path_password_eye_mask_visible 0x7f0f00a5
 int string path_password_strike_through 0x7f0f00a6
+int string permission_subtitle 0x7f0f00b2
 int string search_menu_title 0x7f0f00a7
 int string searchbar_scrolling_view_behavior 0x7f0f00a8
 int string searchview_clear_text_content_description 0x7f0f00a9

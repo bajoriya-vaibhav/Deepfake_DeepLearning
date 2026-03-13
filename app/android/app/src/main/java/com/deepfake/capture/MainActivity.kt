@@ -2,30 +2,23 @@ package com.deepfake.capture
 
 import android.Manifest
 import android.app.Activity
-import android.content.BroadcastReceiver
-import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
-import android.view.View
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
-import androidx.cardview.widget.CardView
 import androidx.core.content.ContextCompat
-import com.google.android.material.button.MaterialButton
-import com.google.android.material.textfield.TextInputEditText
 
 /**
- * Main Activity — entry point with Start/Stop buttons, server URL input, and status display.
- * Handles MediaProjection permission flow and communicates with CaptureService.
+ * Minimal Activity — requests all required permissions, starts CaptureService,
+ * then finishes itself so the user returns to the home screen with the overlay.
  */
 class MainActivity : AppCompatActivity() {
 
@@ -33,131 +26,68 @@ class MainActivity : AppCompatActivity() {
         private const val TAG = "MainActivity"
         private const val PREFS_NAME = "deepfake_prefs"
         private const val KEY_SERVER_URL = "server_url"
+        private const val DEFAULT_SERVER_URL = "http://10.0.2.2:7860"
+        private const val OVERLAY_PERMISSION_REQUEST = 1234
     }
 
-    private lateinit var tvStatus: TextView
-    private lateinit var tvResult: TextView
-    private lateinit var tvConfidence: TextView
-    private lateinit var resultCard: CardView
-    private lateinit var statusIndicator: View
-    private lateinit var etServerUrl: TextInputEditText
-    private lateinit var btnStart: MaterialButton
-    private lateinit var btnStop: MaterialButton
-
-    private var isCapturing = false
-
-    // MediaProjection permission launcher
+    private lateinit var tvPermissionStatus: TextView
     private lateinit var projectionLauncher: ActivityResultLauncher<Intent>
-
-    // Runtime permission launcher
     private lateinit var permissionLauncher: ActivityResultLauncher<Array<String>>
-
-    // Receives status updates from CaptureService
-    private val statusReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context?, intent: Intent?) {
-            val status = intent?.getStringExtra(CaptureService.EXTRA_STATUS) ?: return
-
-            when (status) {
-                CaptureService.STATUS_CAPTURING -> {
-                    updateStatusUI("Capturing…", R.color.status_capturing)
-                    resultCard.visibility = View.GONE
-                }
-                CaptureService.STATUS_ANALYZING -> {
-                    updateStatusUI("Analyzing…", R.color.status_analyzing)
-                }
-                CaptureService.STATUS_IDLE -> {
-                    updateStatusUI("Idle", R.color.status_idle)
-                    setCapturingState(false)
-                }
-                CaptureService.STATUS_ERROR -> {
-                    val errorMsg = intent.getStringExtra("error_msg") ?: "Unknown error"
-                    updateStatusUI("Error: $errorMsg", R.color.result_fake)
-                    setCapturingState(false)
-                    Toast.makeText(context, "Capture error: $errorMsg", Toast.LENGTH_LONG).show()
-                }
-                "Result" -> {
-                    val prediction = intent.getStringExtra(CaptureService.EXTRA_PREDICTION) ?: "Unknown"
-                    val confidence = intent.getFloatExtra(CaptureService.EXTRA_CONFIDENCE, 0f)
-                    showResult(prediction, confidence)
-                }
-            }
-        }
-    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        // Bind views
-        tvStatus = findViewById(R.id.tvStatus)
-        tvResult = findViewById(R.id.tvResult)
-        tvConfidence = findViewById(R.id.tvConfidence)
-        resultCard = findViewById(R.id.resultCard)
-        statusIndicator = findViewById(R.id.statusIndicator)
-        etServerUrl = findViewById(R.id.etServerUrl)
-        btnStart = findViewById(R.id.btnStart)
-        btnStop = findViewById(R.id.btnStop)
+        tvPermissionStatus = findViewById(R.id.tvPermissionStatus)
 
-        // Restore saved server URL
-        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-        val savedUrl = prefs.getString(KEY_SERVER_URL, "http://192.168.1.100:7860")
-        etServerUrl.setText(savedUrl)
-
-        // Setup activity result launchers
+        // Setup MediaProjection result launcher
         projectionLauncher = registerForActivityResult(
             ActivityResultContracts.StartActivityForResult()
         ) { result ->
             if (result.resultCode == Activity.RESULT_OK && result.data != null) {
+                tvPermissionStatus.text = "Starting service…"
                 startCaptureService(result.resultCode, result.data!!)
             } else {
-                Toast.makeText(this, "Screen capture permission denied", Toast.LENGTH_SHORT).show()
-                setCapturingState(false)
+                tvPermissionStatus.text = "Screen capture denied. Tap to retry."
+                tvPermissionStatus.setOnClickListener { startPermissionFlow() }
             }
         }
 
+        // Setup runtime permission launcher
         permissionLauncher = registerForActivityResult(
             ActivityResultContracts.RequestMultiplePermissions()
         ) { permissions ->
             val allGranted = permissions.values.all { it }
             if (allGranted) {
-                requestScreenCapture()
+                checkOverlayPermission()
             } else {
-                Toast.makeText(this, "Audio permission required for capture", Toast.LENGTH_SHORT).show()
-                setCapturingState(false)
+                tvPermissionStatus.text = "Permissions required. Tap to retry."
+                tvPermissionStatus.setOnClickListener { startPermissionFlow() }
             }
         }
 
-        // Button listeners
-        btnStart.setOnClickListener { onStartClicked() }
-        btnStop.setOnClickListener { onStopClicked() }
+        // Start the permission flow automatically
+        startPermissionFlow()
     }
 
     override fun onResume() {
         super.onResume()
-        val filter = IntentFilter(CaptureService.ACTION_STATUS_UPDATE)
-        registerReceiver(statusReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
-    }
-
-    override fun onPause() {
-        super.onPause()
-        unregisterReceiver(statusReceiver)
-    }
-
-    // ─── Button Handlers ──────────────────────────────────────────
-
-    private fun onStartClicked() {
-        // Save the server URL
-        val serverUrl = etServerUrl.text?.toString()?.trim() ?: ""
-        if (serverUrl.isBlank()) {
-            Toast.makeText(this, "Please enter a server URL", Toast.LENGTH_SHORT).show()
-            return
+        // Check if we're returning from overlay permission settings
+        if (Settings.canDrawOverlays(this) && waitingForOverlay) {
+            waitingForOverlay = false
+            requestScreenCapture()
         }
-        getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-            .edit().putString(KEY_SERVER_URL, serverUrl).apply()
+    }
 
-        setCapturingState(true)
+    private var waitingForOverlay = false
 
-        // Check and request permissions
+    // ─── Permission Flow ───────────────────────────────────────────
+
+    private fun startPermissionFlow() {
+        tvPermissionStatus.text = getString(R.string.permission_subtitle)
+        tvPermissionStatus.setOnClickListener(null)
+
+        // Step 1: Check runtime permissions
         val neededPermissions = mutableListOf<String>()
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
             != PackageManager.PERMISSION_GRANTED
@@ -173,27 +103,38 @@ class MainActivity : AppCompatActivity() {
         }
 
         if (neededPermissions.isNotEmpty()) {
+            tvPermissionStatus.text = "Requesting audio & notification permissions…"
             permissionLauncher.launch(neededPermissions.toTypedArray())
+        } else {
+            checkOverlayPermission()
+        }
+    }
+
+    private fun checkOverlayPermission() {
+        if (!Settings.canDrawOverlays(this)) {
+            tvPermissionStatus.text = "Requesting overlay permission…"
+            waitingForOverlay = true
+            val intent = Intent(
+                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:$packageName")
+            )
+            startActivity(intent)
         } else {
             requestScreenCapture()
         }
     }
 
-    private fun onStopClicked() {
-        stopService(Intent(this, CaptureService::class.java))
-        setCapturingState(false)
-        updateStatusUI("Idle", R.color.status_idle)
-    }
-
-    // ─── MediaProjection Flow ─────────────────────────────────────
-
     private fun requestScreenCapture() {
+        tvPermissionStatus.text = "Requesting screen capture…"
         val manager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         projectionLauncher.launch(manager.createScreenCaptureIntent())
     }
 
+    // ─── Start Service & Finish ────────────────────────────────────
+
     private fun startCaptureService(resultCode: Int, data: Intent) {
-        val serverUrl = etServerUrl.text?.toString()?.trim() ?: ""
+        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+        val serverUrl = prefs.getString(KEY_SERVER_URL, DEFAULT_SERVER_URL) ?: DEFAULT_SERVER_URL
 
         val serviceIntent = Intent(this, CaptureService::class.java).apply {
             putExtra(CaptureService.EXTRA_RESULT_CODE, resultCode)
@@ -202,42 +143,9 @@ class MainActivity : AppCompatActivity() {
         }
 
         startForegroundService(serviceIntent)
-        updateStatusUI("Starting…", R.color.status_capturing)
-    }
+        Toast.makeText(this, "Deepfake Detector started", Toast.LENGTH_SHORT).show()
 
-    // ─── UI Updates ───────────────────────────────────────────────
-
-    private fun setCapturingState(capturing: Boolean) {
-        isCapturing = capturing
-        btnStart.isEnabled = !capturing
-        btnStop.isEnabled = capturing
-        etServerUrl.isEnabled = !capturing
-    }
-
-    private fun updateStatusUI(status: String, colorResId: Int) {
-        tvStatus.text = status
-        val color = ContextCompat.getColor(this, colorResId)
-        tvStatus.setTextColor(color)
-
-        // Update the dot indicator color
-        val dot = statusIndicator.background
-        if (dot is android.graphics.drawable.GradientDrawable) {
-            dot.setColor(color)
-        }
-    }
-
-    private fun showResult(prediction: String, confidence: Float) {
-        val isReal = prediction.equals("Real", ignoreCase = true)
-        val color = if (isReal) R.color.result_real else R.color.result_fake
-        val emoji = if (isReal) "✅" else "⚠️"
-
-        updateStatusUI("Result", ContextCompat.getColor(this, color).let {
-            if (isReal) R.color.result_real else R.color.result_fake
-        })
-
-        resultCard.visibility = View.VISIBLE
-        tvResult.text = "$emoji $prediction"
-        tvResult.setTextColor(ContextCompat.getColor(this, color))
-        tvConfidence.text = "Confidence: ${"%.1f".format(confidence * 100)}%"
+        // Finish the Activity — overlay takes over from here
+        finish()
     }
 }
