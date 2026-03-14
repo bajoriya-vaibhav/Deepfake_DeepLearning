@@ -18,7 +18,7 @@ color status_idle
 color teal_200
 color white
 drawable status_dot
-id tvPermissionStatus
+id btnStartOverlay
 layout activity_main
 mipmap ic_launcher
 string app_name

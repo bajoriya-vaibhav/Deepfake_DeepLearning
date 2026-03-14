@@ -25,15 +25,14 @@ class AudioCapturer(
         private const val SAMPLE_RATE = 16000
         private const val CHANNEL_CONFIG = AudioFormat.CHANNEL_IN_MONO
         private const val AUDIO_FORMAT = AudioFormat.ENCODING_PCM_16BIT
-        private const val SEGMENT_DURATION_MS = 3000L
     }
 
     private var audioRecord: AudioRecord? = null
     private var captureJob: Job? = null
     private var isUsingPlaybackCapture = false
 
-    @Volatile
-    private var latestSegment: ByteArray? = null
+    private val pcmBuffer = ByteArrayOutputStream()
+    private val bufferLock = Any()
 
     fun start(scope: CoroutineScope) {
         val minBufferSize = AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT)
@@ -83,30 +82,26 @@ class AudioCapturer(
         }
 
         captureJob = scope.launch(Dispatchers.IO) {
-            val samplesPerSegment = (SAMPLE_RATE * SEGMENT_DURATION_MS / 1000).toInt()
-            val segmentBuffer = ShortArray(samplesPerSegment)
+            val buffer = ShortArray(2048)
 
             while (isActive) {
                 try {
-                    var totalRead = 0
-                    while (totalRead < samplesPerSegment && isActive) {
-                        val read = audioRecord?.read(
-                            segmentBuffer, totalRead, samplesPerSegment - totalRead
-                        ) ?: break
+                    val read = audioRecord?.read(buffer, 0, buffer.size) ?: break
 
-                        if (read > 0) {
-                            totalRead += read
-                        } else if (read < 0) {
-                            Log.e(TAG, "AudioRecord.read error: $read")
-                            break
-                        } else {
-                            delay(10)
+                    if (read > 0) {
+                        synchronized(bufferLock) {
+                            for (i in 0 until read) {
+                                // Write shorts as little endian to our PCM buffer
+                                pcmBuffer.write(buffer[i].toInt() and 0xFF)
+                                pcmBuffer.write((buffer[i].toInt() shr 8) and 0xFF)
+                            }
                         }
-                    }
-
-                    if (totalRead > 0) {
-                        latestSegment = pcmToWav(segmentBuffer, totalRead)
-                        Log.d(TAG, "Audio segment ready: ${latestSegment!!.size} bytes ($totalRead samples)")
+                    } else if (read < 0) {
+                        Log.e(TAG, "AudioRecord error: $read")
+                        break
+                    } else {
+                        // read == 0 means no audio data currently available (silence / no playback)
+                        delay(10)
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Error recording audio segment", e)
@@ -152,9 +147,13 @@ class AudioCapturer(
     }
 
     fun consumeLatestSegment(): ByteArray? {
-        val seg = latestSegment
-        latestSegment = null
-        return seg
+        val pcmBytes = synchronized(bufferLock) {
+            if (pcmBuffer.size() == 0) return null
+            val data = pcmBuffer.toByteArray()
+            pcmBuffer.reset()
+            data
+        }
+        return pcmToWav(pcmBytes)
     }
 
     fun stop() {
@@ -167,12 +166,14 @@ class AudioCapturer(
         }
         audioRecord?.release()
         audioRecord = null
-        latestSegment = null
+        synchronized(bufferLock) {
+            pcmBuffer.reset()
+        }
         Log.i(TAG, "Audio capture stopped")
     }
 
-    private fun pcmToWav(samples: ShortArray, count: Int): ByteArray {
-        val pcmBytes = count * 2
+    private fun pcmToWav(pcmData: ByteArray): ByteArray {
+        val pcmBytes = pcmData.size
         val totalSize = 44 + pcmBytes
 
         val output = ByteArrayOutputStream(totalSize)
@@ -193,12 +194,7 @@ class AudioCapturer(
         header.putInt(pcmBytes)
 
         output.write(header.array())
-
-        val dataBuffer = ByteBuffer.allocate(pcmBytes).order(ByteOrder.LITTLE_ENDIAN)
-        for (i in 0 until count) {
-            dataBuffer.putShort(samples[i])
-        }
-        output.write(dataBuffer.array())
+        output.write(pcmData)
 
         return output.toByteArray()
     }

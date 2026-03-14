@@ -3092,6 +3092,7 @@ int id beginning 0x7f080054
 int id blocking 0x7f080055
 int id bottom 0x7f080056
 int id bounce 0x7f080057
+int id btnStartOverlay 0x7f0801cb
 int id buttonPanel 0x7f08005b
 int id cancel_button 0x7f08005c
 int id center 0x7f08005d
@@ -3436,7 +3437,6 @@ int id transition_position 0x7f0801b2
 int id transition_scene_layoutid_cache 0x7f0801b3
 int id transition_transform 0x7f0801b4
 int id triangle 0x7f0801b5
-int id tvPermissionStatus 0x7f0801ca
 int id unchecked 0x7f0801b9
 int id uniform 0x7f0801ba
 int id unlabeled 0x7f0801bb
